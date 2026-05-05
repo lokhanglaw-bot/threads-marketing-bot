@@ -1,0 +1,11 @@
+# My Fit Monster Marketing Bot
+# 依賴列表
+
+# Playwright - 瀏覽器自動化
+playwright==1.41.0
+
+# HTTP 請求（用於 Telegram API）
+requests==2.31.0
+
+# Python 3.8+ 內置 asyncio
+# aiohttp==3.9.1  # 可選：如果需要異步 HTTP 請求
