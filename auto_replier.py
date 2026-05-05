@@ -1,17 +1,26 @@
 """
-自動化回覆腳本 v4
+自動化回覆腳本 v5
 使用 Playwright + JavaScript 精確定位回覆按鈕
 不受帖子長度影響
+新增：Windows DPI 縮放處理
 """
 
 import os
+import sys
 import time
 import json
+import ctypes
 import webbrowser
 import asyncio
 from threading import Thread
 from dataclasses import dataclass
 from typing import Optional
+
+# ── 告訴 Windows 這個程式自己處理 DPI ──
+ctypes.windll.user32.SetProcessDPIAware()
+
+# 導入螢幕座標工具
+from screen_utils import to_click, find_reply_button
 
 # 嘗試導入 Playwright
 try:
@@ -418,6 +427,22 @@ class ThreadsAutoReplier:
 def main():
     """主函數"""
     from config import TELEGRAM_BOT_TOKEN
+    import screen_utils
+
+    print("=" * 60)
+    print("Threads 智能回覆器 v5")
+    print("=" * 60)
+    print(f"[DPI] 縮放比: {screen_utils.SCALE_X:.2f}x / {screen_utils.SCALE_Y:.2f}y")
+    print()
+    print("工作原理：")
+    print("1. 打開 Threads 帖子")
+    print("2. 使用 JavaScript 找到回覆按鈕")
+    print("3. 自動處理 DPI 縮放問題")
+    print("4. 點擊按鈕並填寫回覆")
+    print("5. 按 Enter 發送")
+    print("=" * 60)
+    print("按 Ctrl+C 停止")
+    print("-" * 60)
 
     if not PLAYWRIGHT_AVAILABLE:
         print("=" * 60)
