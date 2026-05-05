@@ -1,0 +1,72 @@
+[
+  {
+    "name": "ps_l",
+    "value": "1",
+    "domain": ".threads.com",
+    "path": "/",
+    "expires": 1812121320.920711
+  },
+  {
+    "name": "ps_n",
+    "value": "1",
+    "domain": ".threads.com",
+    "path": "/",
+    "expires": 1812121320.920756
+  },
+  {
+    "name": "ig_did",
+    "value": "21B8E40D-5317-42DE-BB87-A9A3CCDCDC30",
+    "domain": ".threads.net",
+    "path": "/",
+    "expires": 1809097113.779851
+  },
+  {
+    "name": "ig_did",
+    "value": "E4733118-EF3E-4247-A91A-389B42578E33",
+    "domain": ".threads.com",
+    "path": "/",
+    "expires": 1809097114.204149
+  },
+  {
+    "name": "dpr",
+    "value": "1.0000000149011612",
+    "domain": ".threads.com",
+    "path": "/",
+    "expires": 1778166120
+  },
+  {
+    "name": "mid",
+    "value": "afNuMwALAAExQmLtyHKlJosYsrwz",
+    "domain": ".threads.com",
+    "path": "/",
+    "expires": 1812121145.543877
+  },
+  {
+    "name": "csrftoken",
+    "value": "pKrCasiadBMx4rpzBC43jVUE8Vju8mKx",
+    "domain": ".threads.com",
+    "path": "/",
+    "expires": 1812549918.193648
+  },
+  {
+    "name": "ds_user_id",
+    "value": "63124868696",
+    "domain": ".threads.com",
+    "path": "/",
+    "expires": 1785597205.110425
+  },
+  {
+    "name": "ps_l",
+    "value": "1",
+    "domain": ".threads.net",
+    "path": "/",
+    "expires": 1812121547.757883
+  },
+  {
+    "name": "ps_n",
+    "value": "1",
+    "domain": ".threads.net",
+    "path": "/",
+    "expires": 1812121547.758156
+  }
+]
