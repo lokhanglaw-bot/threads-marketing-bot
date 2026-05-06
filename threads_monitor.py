@@ -371,28 +371,48 @@ class ThreadsMonitor:
     async def _extract_post_time(self, element) -> str:
         """提取帖子的發布時間（如 '2小時前', '昨天'）"""
         try:
-            # 常見的時間選擇器
-            time_selectors = [
-                'span[dir="ltr"]',
-                'span[dir="auto"]',
-                'time',
-                'abbr[title]',
-                'span.x4pmi6',
-                'span.x1lliihq'
-            ]
+            # 嘗試 JavaScript 提取時間（更可靠）
+            js_result = await element.evaluate("""
+                (el) => {
+                    // 嘗試找 time 標籤
+                    let time = el.querySelector('time');
+                    if (time) {
+                        // 優先返回 datetime 屬性
+                        if (time.getAttribute('datetime')) {
+                            return time.getAttribute('datetime');
+                        }
+                        return time.textContent;
+                    }
 
-            for selector in time_selectors:
-                time_el = await element.query_selector(selector)
-                if time_el:
-                    time_text = await time_el.inner_text()
-                    # 檢查是否像時間格式
-                    if any(keyword in time_text.lower() for keyword in ['秒', '分', '小時', '小時前', '小時', '天', '週', '月', '年', '前', 'ago', 'ago']):
-                        return time_text.strip()
+                    // 嘗試 abbr 標籤
+                    let abbr = el.querySelector('abbr');
+                    if (abbr) {
+                        if (abbr.getAttribute('title')) {
+                            return abbr.getAttribute('title');
+                        }
+                        return abbr.textContent;
+                    }
 
-                    # 嘗試獲取 datetime 屬性
-                    datetime_attr = await time_el.get_attribute('datetime')
-                    if datetime_attr:
-                        return datetime_attr[:16] if len(datetime_attr) > 16 else datetime_attr
+                    // 嘗試找任意包含時間文本的元素
+                    const spans = el.querySelectorAll('span');
+                    for (let span of spans) {
+                        const text = span.textContent;
+                        if (text && (
+                            text.includes('秒') || text.includes('分') ||
+                            text.includes('小時') || text.includes('天') ||
+                            text.includes('週') || text.includes('月') ||
+                            text.includes('年前') || text.includes(' ago')
+                        )) {
+                            return text;
+                        }
+                    }
+
+                    return null;
+                }
+            """)
+
+            if js_result:
+                return js_result[:50]  # 限制長度
 
             return "未知時間"
 
@@ -543,6 +563,7 @@ class ThreadsMonitor:
                         pass
 
                 # 只處理 24 小時內的帖子
+                # 如果時間提取失敗（未知時間），暫時包含（避免完全找不到帖子）
                 if post_time != "未知時間" and not self._is_recent_post(post_time):
                     print(f"[Threads Monitor] ⏭️ 太舊 ({post_time}): {content[:40]}...")
                     continue
@@ -586,6 +607,17 @@ class ThreadsMonitor:
                     if clean_url in seen_urls_this_search or clean_url in self.processed_posts:
                         continue
 
+                    # Trending 帖子提取時間
+                    container = raw_post.get('container')
+                    post_time = "熱門"
+                    if container:
+                        try:
+                            extracted_time = await self._extract_post_time(container)
+                            if extracted_time != "未知時間":
+                                post_time = f"熱門({extracted_time})"
+                        except:
+                            pass
+
                     matched_keywords = self._check_keywords(content)
                     if matched_keywords:
                         post = Post(
@@ -595,7 +627,7 @@ class ThreadsMonitor:
                             url=clean_url,
                             likes=0,
                             timestamp=datetime.now(),
-                            post_time="熱門"
+                            post_time=post_time
                         )
                         posts.append(post)
                         self.processed_posts.add(clean_url)
