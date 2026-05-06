@@ -10,7 +10,7 @@ import os
 import random
 import re
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 from dataclasses import dataclass
 
@@ -30,6 +30,7 @@ class Post:
     url: str
     likes: int
     timestamp: datetime
+    post_time: str = ""  # 帖子的實際發布時間（如 "2小時前"）
 
 
 class ThreadsMonitor:
@@ -367,6 +368,85 @@ class ThreadsMonitor:
         except Exception:
             return "未知用戶"
 
+    async def _extract_post_time(self, element) -> str:
+        """提取帖子的發布時間（如 '2小時前', '昨天'）"""
+        try:
+            # 常見的時間選擇器
+            time_selectors = [
+                'span[dir="ltr"]',
+                'span[dir="auto"]',
+                'time',
+                'abbr[title]',
+                'span.x4pmi6',
+                'span.x1lliihq'
+            ]
+
+            for selector in time_selectors:
+                time_el = await element.query_selector(selector)
+                if time_el:
+                    time_text = await time_el.inner_text()
+                    # 檢查是否像時間格式
+                    if any(keyword in time_text.lower() for keyword in ['秒', '分', '小時', '小時前', '小時', '天', '週', '月', '年', '前', 'ago', 'ago']):
+                        return time_text.strip()
+
+                    # 嘗試獲取 datetime 屬性
+                    datetime_attr = await time_el.get_attribute('datetime')
+                    if datetime_attr:
+                        return datetime_attr[:16] if len(datetime_attr) > 16 else datetime_attr
+
+            return "未知時間"
+
+        except Exception:
+            return "未知時間"
+
+    def _is_recent_post(self, time_text: str) -> bool:
+        """
+        檢查帖子是否是新發布的（24小時內）
+
+        Args:
+            time_text: 時間文字（如 "2小時前"、"昨天"）
+
+        Returns:
+            bool: 是否是近期帖子
+        """
+        time_text_lower = time_text.lower()
+
+        # 跳過已處理的標記
+        if '已處理' in time_text or 'processed' in time_text_lower:
+            return False
+
+        # 檢查常見的時間模式
+        recent_patterns = [
+            '秒', '分鐘', '分鐘前', '小時', '小時前',
+            '今天', '今日', 'day', 'hour', 'minute',
+            '小時前', '分鐘前'
+        ]
+
+        for pattern in recent_patterns:
+            if pattern in time_text_lower:
+                return True
+
+        # 檢查 "昨天"
+        if '昨天' in time_text or 'yesterday' in time_text_lower:
+            return True
+
+        # 檢查數字 + 小時/天/週
+        time_numbers = re.findall(r'(\d+)', time_text)
+        if time_numbers:
+            num = int(time_numbers[0])
+            if any(x in time_text_lower for x in ['小時', '小時前', 'hour', 'h']):
+                return num <= 24  # 24小時內
+            if any(x in time_text_lower for x in ['天', 'day', 'd']):
+                return num <= 1  # 1天內
+            if any(x in time_text_lower for x in ['週', 'week', 'w']):
+                return False  # 超過一週
+            if any(x in time_text_lower for x in ['月', 'month', 'm']):
+                return False  # 超過一個月
+            if any(x in time_text_lower for x in ['年', 'year', 'y']):
+                return False  # 超過一年
+
+        return False  # 無法判斷時間，保守起見跳過
+
     def _check_keywords(self, content: str) -> List[str]:
         """
         檢查內容是否包含關鍵詞
@@ -400,12 +480,14 @@ class ThreadsMonitor:
         seen_urls_this_search = set()  # 單次搜索內去重
 
         try:
-            # 構建搜索 URL - 使用 search 頁面
-            search_url = f"https://www.threads.net/search?q={keyword}"
-            print(f"[Threads Monitor] 搜索關鍵詞: {keyword}")
+            # ── 策略 1: 搜索「最新」排序 ──
+            print(f"[Threads Monitor] 搜索關鍵詞: {keyword} (最新)")
+
+            # 構建搜索 URL - 使用 search 頁面，強制排序為最新
+            search_url = f"https://www.threads.net/search?q={keyword}&mode=latest"
 
             await self.page.goto(search_url, timeout=30000)
-            await self._human_delay(3, 5)  # 等待更長時間讓頁面加載
+            await self._human_delay(3, 5)
 
             # 等待頁面加載完成
             try:
@@ -415,11 +497,11 @@ class ThreadsMonitor:
 
             await self._human_delay(1, 2)
 
-            # 滾動頁面多次，加載所有內容
-            print("[Threads Monitor] 滾動頁面...")
-            for _ in range(5):
-                await self.page.evaluate("window.scrollBy(0, 500)")
-                await self._human_delay(0.8, 1.5)
+            # 滾動頁面多次，加載所有內容（只滾動少量，避免載入太多舊帖子）
+            print("[Threads Monitor] 滾動頁面（淺層滾動，只看最新）...")
+            for i in range(3):  # 減少滾動次數
+                await self.page.evaluate("window.scrollBy(0, 400)")
+                await self._human_delay(0.8, 1.2)
 
             # 提取所有帖子
             print("[Threads Monitor] 提取內容...")
@@ -430,6 +512,7 @@ class ThreadsMonitor:
             for i, raw_post in enumerate(raw_posts):
                 content = raw_post['content']
                 url = raw_post['url']
+                container = raw_post.get('container')
 
                 # 跳過太短的內容
                 if len(content) < 15:
@@ -444,13 +527,24 @@ class ThreadsMonitor:
 
                 # 單次搜索內去重
                 if clean_url in seen_urls_this_search:
-                    print(f"[Threads Monitor] ⏭️ 跳過重複: {content[:40]}...")
                     continue
                 seen_urls_this_search.add(clean_url)
 
-                # 全局去重（基於清理後的 URL）
+                # 全局去重
                 if clean_url in self.processed_posts:
-                    print(f"[Threads Monitor] ⏭️ 已處理過: {content[:40]}...")
+                    continue
+
+                # ── 提取並檢查發布時間 ──
+                post_time = "未知時間"
+                if container:
+                    try:
+                        post_time = await self._extract_post_time(container)
+                    except:
+                        pass
+
+                # 只處理 24 小時內的帖子
+                if post_time != "未知時間" and not self._is_recent_post(post_time):
+                    print(f"[Threads Monitor] ⏭️ 太舊 ({post_time}): {content[:40]}...")
                     continue
 
                 # 檢查關鍵詞
@@ -458,17 +552,54 @@ class ThreadsMonitor:
 
                 if matched_keywords:
                     post = Post(
-                        post_id=clean_url,  # 使用清理後的 URL 作為 ID
+                        post_id=clean_url,
                         content=content,
-                        author="未知用戶",  # 搜索頁面可能沒有作者
-                        url=clean_url,  # 使用清理後的 URL
+                        author="未知用戶",
+                        url=clean_url,
                         likes=0,
-                        timestamp=datetime.now()
+                        timestamp=datetime.now(),
+                        post_time=post_time
                     )
 
                     posts.append(post)
                     self.processed_posts.add(clean_url)
-                    print(f"[Threads Monitor] ✅ 匹配: {content[:60]}...")
+                    print(f"[Threads Monitor] ✅ 匹配 ({post_time}): {content[:60]}...")
+
+            # ── 策略 2: 如果找到的帖子太少，嘗試搜索 Trending ──
+            if len(posts) < 2:
+                print(f"[Threads Monitor] 找到的帖子太少 ({len(posts)})，嘗試 Trending...")
+                trending_url = f"https://www.threads.net/search?q={keyword}&mode=trending"
+                await self.page.goto(trending_url, timeout=30000)
+                await self._human_delay(2, 4)
+
+                await self.page.evaluate("window.scrollBy(0, 300)")
+                await self._human_delay(0.5, 1)
+
+                raw_posts_2 = await self._find_all_posts_on_page()
+                for raw_post in raw_posts_2:
+                    content = raw_post['content']
+                    url = raw_post['url']
+                    clean_url = url.replace('/media', '')
+
+                    if len(content) < 15 or not url or '/post/' not in url:
+                        continue
+                    if clean_url in seen_urls_this_search or clean_url in self.processed_posts:
+                        continue
+
+                    matched_keywords = self._check_keywords(content)
+                    if matched_keywords:
+                        post = Post(
+                            post_id=clean_url,
+                            content=content,
+                            author="未知用戶",
+                            url=clean_url,
+                            likes=0,
+                            timestamp=datetime.now(),
+                            post_time="熱門"
+                        )
+                        posts.append(post)
+                        self.processed_posts.add(clean_url)
+                        print(f"[Threads Monitor] ✅ 熱門匹配: {content[:60]}...")
 
         except Exception as e:
             print(f"[Threads Monitor] 搜索時出錯: {e}")
