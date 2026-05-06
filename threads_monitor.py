@@ -371,52 +371,60 @@ class ThreadsMonitor:
     async def _extract_post_time(self, element) -> str:
         """提取帖子的發布時間（如 '2小時前', '昨天'）"""
         try:
-            # 嘗試 JavaScript 提取時間（更可靠）
+            # 優先嘗試 JavaScript 提取（更準確）
             js_result = await element.evaluate("""
                 (el) => {
-                    // 嘗試找 time 標籤
+                    // 方法1: 找 time 標籤的 datetime 屬性
                     let time = el.querySelector('time');
                     if (time) {
-                        // 優先返回 datetime 屬性
-                        if (time.getAttribute('datetime')) {
-                            return time.getAttribute('datetime');
-                        }
-                        return time.textContent;
+                        let dt = time.getAttribute('datetime');
+                        if (dt) return 'datetime:' + dt;
+                        let text = time.textContent.trim();
+                        if (text) return text;
                     }
 
-                    // 嘗試 abbr 標籤
-                    let abbr = el.querySelector('abbr');
+                    // 方法2: 找 abbr 標籤的 title 屬性
+                    let abbr = el.querySelector('abbr[title]');
                     if (abbr) {
-                        if (abbr.getAttribute('title')) {
-                            return abbr.getAttribute('title');
-                        }
-                        return abbr.textContent;
+                        return 'title:' + abbr.getAttribute('title');
                     }
 
-                    // 嘗試找任意包含時間文本的元素
-                    const spans = el.querySelectorAll('span');
-                    for (let span of spans) {
-                        const text = span.textContent;
-                        if (text && (
-                            text.includes('秒') || text.includes('分') ||
-                            text.includes('小時') || text.includes('天') ||
-                            text.includes('週') || text.includes('月') ||
-                            text.includes('年前') || text.includes(' ago')
-                        )) {
-                            return text;
-                        }
+                    // 方法3: 找任意時間文本
+                    const patterns = [
+                        /(\d+)\s*秒/,
+                        /(\d+)\s*分/,
+                        /(\d+)\s*小時/,
+                        /(\d+)\s*天/,
+                        /昨天/,
+                        /(\d+)\s*週/,
+                        /(\d+)\s*月/
+                    ];
+
+                    const allText = el.innerText || '';
+                    for (let p of patterns) {
+                        let match = allText.match(p);
+                        if (match) return match[0];
                     }
 
                     return null;
                 }
             """)
 
+            if js_result and js_result.startswith('datetime:'):
+                # 解析 ISO datetime 格式
+                datetime_str = js_result.replace('datetime:', '')
+                return datetime_str[:16]  # 返回 "2024-01-01T12:00" 格式
+
+            if js_result and js_result.startswith('title:'):
+                # 解析 title 時間格式
+                return js_result.replace('title:', '')
+
             if js_result:
-                return js_result[:50]  # 限制長度
+                return js_result[:50]
 
             return "未知時間"
 
-        except Exception:
+        except Exception as e:
             return "未知時間"
 
     def _is_recent_post(self, time_text: str) -> bool:
@@ -424,7 +432,7 @@ class ThreadsMonitor:
         檢查帖子是否是新發布的（24小時內）
 
         Args:
-            time_text: 時間文字（如 "2小時前"、"昨天"）
+            time_text: 時間文字（如 "2小時前"、"昨天" 或 ISO datetime "2024-01-01T12:00"）
 
         Returns:
             bool: 是否是近期帖子
@@ -434,6 +442,16 @@ class ThreadsMonitor:
         # 跳過已處理的標記
         if '已處理' in time_text or 'processed' in time_text_lower:
             return False
+
+        # 如果是 ISO datetime 格式（2024-05-05T12:00）
+        if re.match(r'\d{4}-\d{2}-\d{2}', time_text):
+            try:
+                post_time = datetime.fromisoformat(time_text[:16])
+                now = datetime.now()
+                diff_hours = (now - post_time).total_seconds() / 3600
+                return diff_hours <= 24
+            except:
+                return False
 
         # 檢查常見的時間模式
         recent_patterns = [
@@ -455,17 +473,18 @@ class ThreadsMonitor:
         if time_numbers:
             num = int(time_numbers[0])
             if any(x in time_text_lower for x in ['小時', '小時前', 'hour', 'h']):
-                return num <= 24  # 24小時內
+                return num <= 24
             if any(x in time_text_lower for x in ['天', 'day', 'd']):
-                return num <= 1  # 1天內
+                return num <= 1
             if any(x in time_text_lower for x in ['週', 'week', 'w']):
-                return False  # 超過一週
+                return False
             if any(x in time_text_lower for x in ['月', 'month', 'm']):
-                return False  # 超過一個月
+                return False
             if any(x in time_text_lower for x in ['年', 'year', 'y']):
-                return False  # 超過一年
+                return False
 
-        return False  # 無法判斷時間，保守起見跳過
+        # 無法判斷時間，保守起見返回 False（跳過）
+        return False
 
     def _check_keywords(self, content: str) -> List[str]:
         """
